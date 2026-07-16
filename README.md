@@ -2,7 +2,8 @@
 
 An AI operations copilot for FIFA World Cup 2026 host stadiums: one console where venue staff read live crowd density and ask Google Gemini what to do about it, and where fans get routed, answered and planned for in their own language.
 
-**Live demo:** <!-- LIVE_URL -->
+**Live demo:** https://prompt-wars-4-by-soup.vercel.app
+**Health / evidence endpoint:** https://prompt-wars-4-by-soup.vercel.app/api/health
 
 ---
 
@@ -74,7 +75,7 @@ ConsoleProvider                         GET  /api/snapshot   ─┐
      (zod-parsed, never throws)                └─ gemini.ts ──► Google Gemini API
 ```
 
-- **Next.js 15 App Router.** `src/app/page.tsx` is a server component that lays out the console and delegates every stateful part to client islands under a single `ConsoleProvider`.
+- **Next.js 16 App Router.** `src/app/page.tsx` is a server component that lays out the console and delegates every stateful part to client islands under a single `ConsoleProvider`.
 - **TypeScript strict, plus `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noUnusedLocals` and `noImplicitOverride`** (`tsconfig.json`).
 - **Route handlers are server-side only.** `GEMINI_API_KEY` is read exclusively in `src/lib/gemini.ts:21` and `:35`, which is imported only by route handlers. It is not prefixed `NEXT_PUBLIC_`, is never returned in a response body, and is never bundled into client JavaScript — **the API key cannot reach the browser.**
 - **Domain core is pure.** `crowd-model.ts`, `wayfinding.ts`, `venue.ts` and `itinerary.ts` perform no I/O and know nothing about HTTP or React. They are the four modules under exhaustive test.
@@ -121,7 +122,7 @@ All four gates were run against this commit. Real output:
 | --- | --- | --- |
 | Types | `npx tsc --noEmit` | **exit 0**, 0 errors |
 | Lint | `npx eslint . --max-warnings 0` | **exit 0**, 0 errors, 0 warnings |
-| Tests | `npx vitest run` | **103 passed / 103**, 5 files, 5.48s |
+| Tests | `npx vitest run` | **110 passed / 110**, 6 files |
 | Build | `npx next build` | **✓ Compiled successfully**, 8 routes, 126 kB First Load JS |
 
 Coverage of `src/lib` (`npx vitest run --coverage`, v8):

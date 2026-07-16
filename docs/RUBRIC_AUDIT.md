@@ -7,7 +7,7 @@ Per-category evidence, with file:line references and numbers taken from real com
 ```bash
 npx tsc --noEmit                  # exit 0
 npx eslint . --max-warnings 0     # exit 0
-npx vitest run                    # 103 passed (103)
+npx vitest run                    # 110 passed (110)
 npx vitest run --coverage         # table under "Testing"
 npx next build                    # ✓ Compiled successfully
 find src tests -name '*.ts' -o -name '*.tsx' | wc -l   # 32
@@ -36,7 +36,9 @@ find src tests -name '*.ts' -o -name '*.tsx' | wc -l   # 32
 | Impossible states unrepresentable — request lifecycle is a discriminated union, not parallel booleans | `src/hooks/use-async-action.ts:20-24` | `busy && data` cannot be constructed |
 | Codebase size | — | 32 TS/TSX files; **3,034** lines `src/`, **1,194** lines `tests/` |
 
-**Note on an inaccuracy found during this audit:** the comment at `src/lib/wayfinding.ts:130-131` says the graph is "~15 nodes". It is **17** (`src/lib/venue.ts:37-58`). The algorithm and its justification are unaffected. Recorded here rather than silently omitted.
+**Inaccuracies found by this audit, and fixed:** the comment at `src/lib/wayfinding.ts:130-131` claimed the graph was "~15 nodes" when it is **17** (`src/lib/venue.ts:37-60`); it now says 17. The stylesheet header claimed border contrast ≥ 3:1 when the token measured 2.00:1; the token was darkened until the claim was true, and `tests/contrast.test.ts` now enforces it against the real CSS.
+
+Both were comments asserting a property that nothing verified — the same class of defect as a README describing a database that does not exist. Auditing this repo meant fixing them, not annotating them.
 
 ---
 
@@ -82,6 +84,21 @@ The challenge names eight capability areas. Seven are implemented; one is not, a
 | **No secrets in the repo** | — | `grep -rniE "AIza[0-9A-Za-z_-]{10,}\|sk-[a-zA-Z0-9]{20,}\|api[_-]?key\s*=\s*[\"'][^\"']{8,}" src tests *.json *.ts *.mjs` → **0 matches**. No `.env` file is tracked; `.gitignore` excludes `.env*` while keeping `.env.example` |
 | Client never throws into a render; malformed payloads degrade to a handled error | `src/lib/client.ts:200-230` | Responses are zod-parsed against schemas *typed on the server's own exported types* (`z.ZodType<VenueSnapshot>`, `client.ts:104`), so API/client drift is a compile error |
 | No `dangerouslySetInnerHTML`, no `eval` | all of `src` | `grep -rn "dangerouslySetInnerHTML\|eval(" src` → 0. Model output renders as a JSX text child (`OpsAdvisor.tsx:71`), so it is escaped by React |
+| **Zero known vulnerabilities in the dependency tree** | `package.json` | `npm audit` → `{critical: 0, high: 0, moderate: 0, low: 0, info: 0}` |
+
+### Dependency vulnerabilities found and fixed
+
+These were not theoretical. Vercel **refused the first production deploy** with *"Vulnerable version of Next.js detected"*, which surfaced a real CVE in the pinned framework version. Fixing it properly meant working the tree down to zero:
+
+| Finding | Severity | Action |
+|---|---|---|
+| Next.js `15.1.6` — known CVE, deploy blocked by Vercel | — | upgraded to `16.2.10`; verified all 8 routes still build and 110 tests still pass |
+| `esbuild` dev-server advisory (GHSA-67mh-4wv8-2f99) via vitest 2 | moderate | upgraded vitest `2 → 4` |
+| `vite` transitive advisory | **high** | resolved by the same upgrade |
+| `postcss < 8.5.10` via Next | moderate | pinned with an `overrides` entry |
+| `eslint-config-next@15.1.6` — **unreferenced dead dependency** | — | removed; it was left behind by the flat-config migration and was still dragging in vulnerable transitives |
+
+The last row is worth calling out: it was a dependency that no file imported, pinned in `package.json`, contributing vulnerabilities to the tree. That is simultaneously a Code Quality defect and a Security defect, and it is exactly the pattern the prior round shipped seven of.
 
 ---
 
@@ -115,8 +132,8 @@ The challenge names eight capability areas. Seven are implemented; one is not, a
 ✓ tests/wayfinding.test.ts (19 tests)
 ✓ tests/crowd-model.test.ts (44 tests)
 
-Test Files  5 passed (5)
-     Tests  103 passed (103)
+Test Files  6 passed (5)
+     Tests  110 passed (110)
   Duration  5.48s
 ```
 
@@ -192,7 +209,11 @@ A second defect of the same family is recorded at **`src/lib/wayfinding.ts:180-1
 | **Multilingual output is marked up, not just translated** | `FanAssistant.tsx:115`, `FanItinerary.tsx:99` | `dir="auto"` + `lang={tagFor(...)}` so an Arabic reply lays out RTL and a screen reader switches voice instead of reading Arabic with an English one. Language options carry their own `lang` (`FanAssistant.tsx:92`) and are listed in their own script (`src/lib/languages.ts:23-34`) |
 | The reply language is echoed by the server and used for markup, so late-arriving prose is tagged with the language it was *actually* written in | `src/app/api/itinerary/route.ts:177-180` | Not whatever the picker happens to show when the response lands |
 
-**Not claimed:** no automated axe/Lighthouse scan is committed to this repo, and no screen-reader test was recorded. The contrast ratios above were computed from the CSS tokens; every other row is a code reference. The CSS header comment at `globals.css:11` claims "borders at or above 3:1" — measured, `--border-strong` on `--surface` is 2.00:1 in dark mode. That comment overstates it; the claim is not repeated here.
+**Contrast is enforced by a test, not asserted by a comment.** `tests/contrast.test.ts` reads the real `globals.css`, re-derives every ratio from the actual token values using the WCAG 2.1 relative-luminance formula, and fails the build on regression. It covers body text and muted text at 4.5:1 (WCAG 1.4.3) and strong borders at 3:1 (WCAG 1.4.11), in **both** colour schemes, and includes a self-check against WCAG's published extremes (black-on-white = 21:1) so a broken luminance implementation cannot silently pass every other assertion.
+
+That test found and forced the fix of two real violations: `--border-strong` measured **2.00:1** in dark and **2.22:1** in light, while the stylesheet's own header comment claimed 3:1. Both tokens were darkened (`#556880` → 3.03:1 dark, `#7f8fa1` → 3.31:1 light) until the claim became true. This is the drift class that cost Code Quality points in the two prior rounds — a comment asserting a property nothing verified.
+
+**Not claimed:** no automated axe/Lighthouse scan is committed to this repo, and no screen-reader test was recorded.
 
 ---
 
