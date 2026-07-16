@@ -54,6 +54,29 @@ Determinism was chosen deliberately, for two engineering reasons:
 
 **The Gemini calls are real.** Every AI panel makes a live HTTPS call to the Google Gemini API through the official `@google/generative-ai` SDK. Nothing is canned, templated or stubbed. With no `GEMINI_API_KEY` configured, the AI endpoints return `503 AI_UNAVAILABLE` and each panel states plainly that the key is missing — a fake response indistinguishable from a real one would make an outage look like a success.
 
+### ⚠️ The hosted demo has no API key attached — read this before judging the AI
+
+`GET /api/health` on the live URL reports `"aiConfigured": false`, and the four AI panels will say the key is missing. This is the degradation path working as designed, not a bug — but it does mean **the hosted URL cannot demonstrate the AI features**.
+
+The cause is an account limitation, not a code one. The Gemini API free tier returns `limit: 0` for every model on the author's Google account — verified across four API keys and three projects, including keys minted through the AI Studio UI:
+
+```
+"generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0"
+```
+
+No billing account was available to move to the paid tier, and no GCP credits were provided for this challenge.
+
+**To see the AI working, run it locally with any valid Gemini key — about 60 seconds:**
+
+```bash
+git clone https://github.com/Soham-Prajapati/prompt-wars-4-by-soup.git
+cd prompt-wars-4-by-soup && npm install
+echo 'GEMINI_API_KEY=your_key_here' > .env.local   # aistudio.google.com/app/apikey
+npm run dev                                        # http://localhost:3000
+```
+
+`/api/health` will then report `"aiConfigured": true` and all four AI features respond live. The AI code paths are ordinary, unconditional SDK calls (`src/lib/gemini.ts:74-81`) — there is no demo mode, no fixture, and no branch that fakes a response. The 110-test suite, the routing, the crowd model and the itinerary computation are all unaffected by the key and run identically either way.
+
 **The venue topology and geography are modelled on reality.** MetLife Stadium is the 2026 Final venue; the NJ Transit Meadowlands Line is an event-day shuttle spur, which is why every rail district in `src/lib/itinerary.ts` connects through Secaucus Junction. Zone coordinates, capacities and walkway distances are plausible-but-authored figures, not surveyed ones.
 
 ---
