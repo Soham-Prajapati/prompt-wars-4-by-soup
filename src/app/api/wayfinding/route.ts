@@ -11,7 +11,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { handle, jsonError, jsonOk, readJsonBody } from "@/lib/api";
-import { clockFromWallTime, snapshotAt } from "@/lib/crowd-model";
+import { currentSnapshot } from "@/lib/crowd-model";
 import { MODEL_NAME, generate } from "@/lib/gemini";
 import { wayfindingRequestSchema } from "@/lib/validation";
 import { findRoute, type Route } from "@/lib/wayfinding";
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 	return handle(async () => {
 		const { origin, destination, stepFreeOnly } = wayfindingRequestSchema.parse(await readJsonBody(request));
 
-		const snapshot = snapshotAt(clockFromWallTime(Date.now()));
+		const snapshot = currentSnapshot();
 		const route = findRoute(origin, destination, snapshot, { stepFreeOnly });
 
 		if (route === null) {

@@ -3,6 +3,7 @@
 import { type ReactElement } from "react";
 
 import { useConsole } from "@/components/ConsoleProvider";
+import { TrendIndicator } from "@/components/TrendIndicator";
 import { SNAPSHOT_POLL_MS } from "@/hooks/use-venue-snapshot";
 import { type MatchPhase } from "@/lib/crowd-model";
 
@@ -19,12 +20,17 @@ const PHASE_LABELS: Readonly<Record<MatchPhase, string>> = {
 const POLL_SECONDS = SNAPSHOT_POLL_MS / 1000;
 
 /**
- * Matchday status strip: phase, Fan Friction Score and mean density.
+ * Matchday status strip: phase, Fan Friction Score, mean density and outlook.
  *
  * Renders the shared snapshot feed that `ConsoleProvider` polls every four
  * seconds. It is not wired with `aria-live`: the values change on every poll,
  * and announcing them continuously would bury the results a user actually asked
  * for. The panels that answer a request announce themselves instead.
+ *
+ * The outlook is the one figure here that is not a measurement — it is where the
+ * friction score is heading over the forecast horizon, which is what makes the
+ * strip an instrument rather than a readout. It arrives on the same response as
+ * the score beside it, so the two cannot describe different minutes.
  */
 export function LiveClock(): ReactElement {
 	const { snapshot, error, loading } = useConsole();
@@ -56,6 +62,15 @@ export function LiveClock(): ReactElement {
 					<div className="clock__stat">
 						<dt className="clock__label">Mean density</dt>
 						<dd className="clock__value">{Math.round(snapshot.meanDensity * 100)}%</dd>
+					</div>
+					<div className="clock__stat clock__stat--wide">
+						<dt className="clock__label">Friction outlook</dt>
+						<dd className="clock__value clock__value--trend">
+							<TrendIndicator
+								trend={snapshot.forecast.trend}
+								detail={`${String(snapshot.forecast.projectedFrictionScore)}/100 in ${String(snapshot.forecast.horizonMinutes)} min`}
+							/>
+						</dd>
 					</div>
 				</dl>
 			)}

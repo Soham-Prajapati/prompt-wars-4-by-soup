@@ -15,16 +15,21 @@
  */
 import { useEffect, useState } from "react";
 
-import { fetchSnapshot, type ApiError } from "@/lib/client";
-import { type VenueSnapshot } from "@/lib/crowd-model";
+import { fetchSnapshot, type ApiError, type SnapshotResponse } from "@/lib/client";
 
 /** Interval between snapshot polls, in milliseconds. */
 export const SNAPSHOT_POLL_MS = 4000;
 
 /** Reactive state of the snapshot feed. */
 export interface SnapshotState {
-	/** Most recent successful snapshot, or `null` before the first response. */
-	readonly snapshot: VenueSnapshot | null;
+	/**
+	 * Most recent successful snapshot, or `null` before the first response.
+	 *
+	 * Carries its own forecast, so every panel reads the live state and the
+	 * projection from one response — and cannot show a trend anchored to a
+	 * different minute than the density beside it.
+	 */
+	readonly snapshot: SnapshotResponse | null;
 	/** Error from the most recent poll, or `null` when it succeeded. */
 	readonly error: ApiError | null;
 	/** True until the first poll settles. */

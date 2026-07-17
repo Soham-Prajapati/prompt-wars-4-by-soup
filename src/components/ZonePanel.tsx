@@ -3,6 +3,7 @@
 import { type ReactElement } from "react";
 
 import { useConsole } from "@/components/ConsoleProvider";
+import { TrendIndicator } from "@/components/TrendIndicator";
 import { type ZoneKind, getZone } from "@/lib/venue";
 
 /** Operator-facing names for the zone categories in the venue topology. */
@@ -21,12 +22,22 @@ const KIND_LABELS: Readonly<Record<ZoneKind, string>> = {
  * Restates the marker's reading as text — density, occupancy, queue and
  * step-free status — because the map communicates shape and severity, and an
  * operator acting on it needs the numbers behind the colour.
+ *
+ * The outlook row is the one the map cannot show at all. A marker can only draw
+ * the present; whether this zone is filling or emptying is what decides whether
+ * an operator acts on it now or watches it, and there is nowhere on a static
+ * plot to put that.
  */
 export function ZonePanel(): ReactElement {
 	const { snapshot, selectedZoneId } = useConsole();
 
 	const reading = snapshot?.zones.find((zone) => zone.zoneId === selectedZoneId) ?? null;
 	const zone = selectedZoneId === null ? undefined : getZone(selectedZoneId);
+
+	// Held together rather than read separately, so the horizon rendered in the
+	// label is the horizon the trend beside it was actually computed over.
+	const forecast = snapshot?.forecast ?? null;
+	const trend = forecast?.zones.find((zone) => zone.zoneId === selectedZoneId) ?? null;
 
 	if (reading === null || zone === undefined) {
 		return (
@@ -65,6 +76,27 @@ export function ZonePanel(): ReactElement {
 					<dt className="stat__label">Zone type</dt>
 					<dd className="stat__value">{KIND_LABELS[reading.kind]}</dd>
 				</div>
+				{trend !== null && forecast !== null && (
+					<div className="stat stat--wide">
+						<dt className="stat__label">
+							{trend.projectedAlert === reading.alert ? "Outlook" : "Outlook — alert band changes"}
+						</dt>
+						<dd className="stat__value stat__value--trend">
+							<TrendIndicator
+								trend={trend.trend}
+								detail={
+									// The band transition is named only when there is one: an
+									// operator scanning for the zone about to go critical should
+									// not have to read past fifteen zones restating the band
+									// they are already in.
+									trend.projectedAlert === reading.alert
+										? `${String(Math.round(trend.projectedDensity * 100))}% in ${String(forecast.horizonMinutes)} min`
+										: `${String(Math.round(trend.projectedDensity * 100))}% and ${trend.projectedAlert} in ${String(forecast.horizonMinutes)} min`
+								}
+							/>
+						</dd>
+					</div>
+				)}
 			</dl>
 
 			<p className={zone.stepFree ? "access access--step-free" : "access access--stepped"}>

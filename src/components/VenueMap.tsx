@@ -61,7 +61,7 @@ export function VenueMap(): ReactElement {
 	const { snapshot, selectedZoneId, selectZone } = useConsole();
 
 	if (snapshot === null) {
-		return <p className="panel-placeholder">Waiting for the first sensor snapshot…</p>;
+		return <p className="panel-placeholder">Waiting for the first simulated snapshot…</p>;
 	}
 
 	const onZoneKeyDown = (event: KeyboardEvent<SVGGElement>, zoneId: string): void => {

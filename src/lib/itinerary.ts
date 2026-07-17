@@ -13,6 +13,8 @@
  * Secaucus Junction. East Rutherford, the stadium's own township, is close
  * enough to be a bus district instead.
  */
+import { WALKWAYS, ZONES } from "@/lib/venue";
+
 /** How a fan staying in a district reaches the stadium. */
 export type TransitMode = "rail" | "bus";
 
@@ -96,6 +98,21 @@ export const INTERESTS: readonly string[] = [
 	"Live music",
 ] as const;
 
+const INTEREST_SET: ReadonlySet<string> = new Set(INTERESTS);
+
+/**
+ * True when `interest` is one of the tags {@link INTERESTS} offers.
+ *
+ * Interest tags are interpolated into the itinerary prompt verbatim, so this is
+ * the boundary that keeps the prompt made of text this repository wrote. An
+ * unrecognised tag is a client error, not a preference to pass through.
+ *
+ * @param interest The candidate tag, compared exactly — no trimming or casing.
+ */
+export function isKnownInterest(interest: string): boolean {
+	return INTEREST_SET.has(interest);
+}
+
 /** Minutes of lead time every fan needs for ticketing, search and entry. */
 const ENTRY_BUFFER_MINUTES = 15;
 
@@ -113,6 +130,33 @@ const GATES_BY_MODE: Readonly<Record<TransitMode, readonly [string, string]>> = 
 	rail: ["gate-a", "gate-b"],
 	bus: ["gate-c", "gate-d"],
 };
+
+/** Ids of the venue's transit zones — where fans arrive from outside the venue. */
+const TRANSIT_ZONE_IDS: ReadonlySet<string> = new Set(ZONES.filter((z) => z.kind === "transit").map((z) => z.id));
+
+/** Ids of venue zones that are themselves reachable without stairs or escalators. */
+const STEP_FREE_ZONE_IDS: ReadonlySet<string> = new Set(ZONES.filter((z) => z.stepFree).map((z) => z.id));
+
+/**
+ * True when a gate is level *and* at least one step-free walkway joins it to
+ * some transit zone.
+ *
+ * Both halves matter: a level gate behind a stepped walkway is not accessible,
+ * and neither is a step-free walkway into a stepped gate. Checking only the
+ * zone would route a wheelchair user down the stepped `bus → gate-c` approach.
+ *
+ * "Some transit zone" and not "the gate's own mode's transit zone": the modes
+ * are separated by {@link GATES_BY_MODE} before this is ever consulted, so this
+ * only has to answer whether the gate is enterable at all.
+ */
+function isStepFreeGate(gateId: string): boolean {
+	if (!STEP_FREE_ZONE_IDS.has(gateId)) return false;
+	return WALKWAYS.some(
+		(w) =>
+			w.stepFree &&
+			((w.to === gateId && TRANSIT_ZONE_IDS.has(w.from)) || (w.from === gateId && TRANSIT_ZONE_IDS.has(w.to))),
+	);
+}
 
 const DISTRICTS_BY_ID: ReadonlyMap<string, HostDistrict> = new Map(HOST_DISTRICTS.map((d) => [d.id, d]));
 
@@ -151,21 +195,50 @@ export function recommendedDepartureMinutes(district: HostDistrict, stepFree: bo
  * every rail district to one gate would model a queue the venue does not have.
  *
  * @param district Where the fan is staying.
+ * @param stepFreeNeeded True when the fan needs level access, which restricts the
+ *   choice to gates that are both level and joined to a transit zone by a
+ *   step-free walkway. Defaults to false.
  * @returns A zone id that exists in the venue topology.
  */
-export function arrivalGate(district: HostDistrict): string {
+export function arrivalGate(district: HostDistrict, stepFreeNeeded = false): string {
 	const gates = GATES_BY_MODE[district.transitMode];
+
+	// Load spreading is a convenience; step-free access is not. A fan who needs
+	// level access must be sent to a gate they can actually enter, even when
+	// that concentrates arrivals — so the accessible gates are filtered first
+	// and the spreading rule only applies to what survives. Every mode retains at
+	// least one gate; `tests/itinerary.test.ts` asserts that against the topology
+	// rather than trusting this comment.
+	const usable = stepFreeNeeded ? gates.filter(isStepFreeGate) : gates;
+
 	const peers = HOST_DISTRICTS.filter((d) => d.transitMode === district.transitMode);
 	const index = peers.findIndex((d) => d.id === district.id);
 
-	// A district outside the catalogue still gets a real gate for its mode rather
-	// than an invented one.
-	if (index < 0) return gates[0];
-	return index % 2 === 0 ? gates[0] : gates[1];
+	// A district outside the catalogue has no roster position to spread by, so it
+	// takes the first usable gate — a real gate for its mode rather than an
+	// invented one.
+	const position = index < 0 ? 0 : index;
+
+	// `position % usable.length` is in range by construction. The fallback is what
+	// `noUncheckedIndexedAccess` requires of any computed index, and is a truthful
+	// way to say it where a non-null assertion would merely be a louder one.
+	return usable[position % usable.length] ?? gates[0];
 }
 
 /**
- * The transit zone a mode's fans arrive into.
+ * The zone a mode's fans arrive into, as a venue zone id.
+ *
+ * This is a mapping, not a rename, even though the two `TransitMode` values and
+ * the two transit zone ids currently spell the same. They are separate
+ * vocabularies: `TransitMode` describes how a fan travels and lives in the
+ * district catalogue, while the return value is an id that must resolve in
+ * `ZONES`. Renaming the `bus` zone to `bus-terminal` in the venue topology would
+ * be a one-line change here and a correct one; without this function it would be
+ * a silent mismatch scattered across the callers.
+ *
+ * Callers asking *how the fan travels* should read `district.transitMode`
+ * directly — going through here to compare against `"rail"` reads as if the
+ * coincidence were load-bearing.
  *
  * @param mode The district's transit mode.
  * @returns A zone id that exists in the venue topology.
@@ -180,8 +253,15 @@ export function transitZone(mode: TransitMode): string {
  * Used to select the congestion readings worth putting in front of the model:
  * the whole venue is noise for a fan who only passes through two zones of it.
  *
+ * `stepFreeNeeded` is threaded through to {@link arrivalGate} rather than
+ * defaulted away, because the gate it picks is the gate the plan reports. A
+ * prompt built from the unflagged gate would quote the queue at a gate the fan
+ * is not being sent to — and the model is instructed to cite that queue.
+ *
  * @param district Where the fan is staying.
+ * @param stepFreeNeeded True when the fan needs level access. Defaults to false.
+ * @returns The transit zone id followed by the arrival gate id.
  */
-export function approachZones(district: HostDistrict): readonly string[] {
-	return [transitZone(district.transitMode), arrivalGate(district)];
+export function approachZones(district: HostDistrict, stepFreeNeeded = false): readonly string[] {
+	return [transitZone(district.transitMode), arrivalGate(district, stepFreeNeeded)];
 }

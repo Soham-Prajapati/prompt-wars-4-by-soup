@@ -9,7 +9,14 @@
 /** Category of a venue zone, used to weight crowd-flow behaviour. */
 export type ZoneKind = "gate" | "concourse" | "stand" | "concession" | "transit" | "medical";
 
-/** A discrete, sensor-instrumented area of the venue. */
+/**
+ * A discrete area of the venue, and the unit the crowd model reports against.
+ *
+ * Not sensor-instrumented: no hardware is connected to this project. Occupancy
+ * for a zone is derived analytically from the match clock — see `crowd-model.ts`
+ * — and calling a zone "instrumented" would claim the one thing the README is
+ * careful not to.
+ */
 export interface Zone {
 	readonly id: string;
 	readonly name: string;
@@ -34,6 +41,13 @@ export interface Walkway {
 	readonly stepFree: boolean;
 }
 
+/**
+ * Every zone the venue is modelled as.
+ *
+ * The single source of truth for the topology: the crowd model reads one
+ * per zone, the router walks between them, and the itinerary planner derives
+ * its accessible gates from them. Adding a zone here adds it everywhere.
+ */
 export const ZONES: readonly Zone[] = [
 	{ id: "gate-a", name: "Gate A — North", kind: "gate", x: 50, y: 6, capacity: 2400, stepFree: true },
 	{ id: "gate-b", name: "Gate B — East", kind: "gate", x: 92, y: 50, capacity: 2400, stepFree: true },
@@ -57,6 +71,13 @@ export const ZONES: readonly Zone[] = [
 	{ id: "bus", name: "Bus Terminal", kind: "transit", x: 8, y: 86, capacity: 2200, stepFree: true },
 ] as const;
 
+/**
+ * Every walkway joining two zones.
+ *
+ * Declared once per pair, in one direction, but read as bidirectional
+ * throughout — a fan walks a corridor either way. Consumers must therefore
+ * match on `from` and `to` in both orders rather than assume the order below.
+ */
 export const WALKWAYS: readonly Walkway[] = [
 	{ from: "rail", to: "gate-a", metres: 260, stepFree: true },
 	{ from: "rail", to: "gate-b", metres: 240, stepFree: true },

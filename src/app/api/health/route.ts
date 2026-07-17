@@ -16,7 +16,7 @@ import { NextResponse } from "next/server";
 import pkg from "../../../../package.json";
 
 import { handle, jsonOk } from "@/lib/api";
-import { clockFromWallTime, snapshotAt } from "@/lib/crowd-model";
+import { currentSnapshot } from "@/lib/crowd-model";
 import { MODEL_NAME, isConfigured } from "@/lib/gemini";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function GET(): Promise<NextResponse> {
 	// Every field is computed synchronously, so the handler resolves immediately
 	// rather than being marked `async` with nothing to await.
 	return handle(() => {
-		const snapshot = snapshotAt(clockFromWallTime(Date.now()));
+		const snapshot = currentSnapshot();
 
 		return Promise.resolve(
 			jsonOk({

@@ -14,29 +14,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { handle, jsonOk, readJsonBody } from "@/lib/api";
-import { clockFromWallTime, snapshotAt, type VenueSnapshot, type ZoneReading } from "@/lib/crowd-model";
+import { currentSnapshot, type VenueSnapshot } from "@/lib/crowd-model";
 import { MODEL_NAME, generate } from "@/lib/gemini";
+import { describeZoneForFan } from "@/lib/prompt";
 import { assistantRequestSchema } from "@/lib/validation";
-import { getZone } from "@/lib/venue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Render one zone reading as a fan-facing prompt line. */
-function describeZone(zone: ZoneReading): string {
-	const wait = zone.waitMinutes > 0 ? `, about ${String(zone.waitMinutes)} min queue` : "";
-	const access = getZone(zone.zoneId)?.stepFree === true ? "step-free access" : "steps on approach";
-	const pct = Math.round(zone.density * 100);
-	return `- ${zone.name} (${zone.kind}): ${String(pct)}% full, alert ${zone.alert}${wait}, ${access}`;
-}
-
-/** Compose the assistant prompt from the live snapshot and the fan's question. */
+/**
+ * Compose the assistant prompt from the live snapshot and the fan's question.
+ *
+ * @param snapshot Live venue state, the only facts the answer may draw on.
+ * @param question The fan's question, as validated.
+ * @param language Catalogue endonym the reply must be written in.
+ */
 function buildPrompt(snapshot: VenueSnapshot, question: string, language: string): string {
 	return [
 		`Matchday phase: ${snapshot.phase} (clock ${String(snapshot.clockMinutes)} min since gates opened).`,
 		"",
 		"Live venue state:",
-		...snapshot.zones.map(describeZone),
+		...snapshot.zones.map(describeZoneForFan),
 		"",
 		`A fan asks: "${question}"`,
 		"",
@@ -52,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 	return handle(async () => {
 		const { question, language } = assistantRequestSchema.parse(await readJsonBody(request));
 
-		const snapshot = snapshotAt(clockFromWallTime(Date.now()));
+		const snapshot = currentSnapshot();
 		const answer = await generate(buildPrompt(snapshot, question, language));
 
 		return jsonOk({ answer, language, model: MODEL_NAME });

@@ -21,12 +21,13 @@ import {
 	arrivalGate,
 	getDistrict,
 	isKnownDistrict,
+	isKnownInterest,
 	recommendedDepartureMinutes,
 	transitZone,
 	type HostDistrict,
 	type TransitMode,
 } from "@/lib/itinerary";
-import { WALKWAYS, isKnownZone } from "@/lib/venue";
+import { WALKWAYS, ZONES, getZone, isKnownZone } from "@/lib/venue";
 
 /** The transit zone each mode's fans arrive into, per the venue topology. */
 const TRANSIT_ZONE_FOR_MODE: Readonly<Record<TransitMode, string>> = {
@@ -106,13 +107,25 @@ describe("INTERESTS", () => {
 	});
 
 	/**
-	 * Interests are sent to an API that caps each tag at 40 characters, so a tag
-	 * longer than that would be offered in the UI and rejected on submit.
+	 * The API accepts exactly this catalogue and nothing else, so a tag the UI
+	 * offers but `isKnownInterest` rejects would be a checkbox that always 422s.
 	 */
-	it("all fit within the length the API accepts", () => {
+	it("are all recognised by isKnownInterest", () => {
 		for (const interest of INTERESTS) {
-			expect(interest.length, `"${interest}" exceeds the API's 40-character cap`).toBeLessThanOrEqual(40);
+			expect(isKnownInterest(interest), interest).toBe(true);
 		}
+	});
+
+	it("does not recognise a tag outside the catalogue", () => {
+		expect(isKnownInterest("Cryptozoology")).toBe(false);
+		expect(isKnownInterest("")).toBe(false);
+	});
+
+	/** Exact comparison: a near-miss is an off-catalogue value, not a typo to absorb. */
+	it("does not recognise a tag that merely resembles one", () => {
+		expect(isKnownInterest("local food")).toBe(false);
+		expect(isKnownInterest(" Local food")).toBe(false);
+		expect(isKnownInterest("Local food ")).toBe(false);
 	});
 });
 
@@ -243,6 +256,82 @@ describe("arrivalGate", () => {
 			expect(neighboursOf(gate)).toContain(TRANSIT_ZONE_FOR_MODE[mode]);
 		}
 	});
+
+	/** The flag defaults to false, so the two spellings must not disagree. */
+	it("treats an omitted step-free flag as false", () => {
+		for (const district of HOST_DISTRICTS) {
+			expect(arrivalGate(district), district.id).toBe(arrivalGate(district, false));
+		}
+	});
+});
+
+describe("arrivalGate — step-free access", () => {
+	/**
+	 * `arrivalGate` documents itself as filtering to gates a fan needing level
+	 * access can actually enter, and drops the "no such gate" branch on the
+	 * grounds that every mode has one. That is a claim about the venue topology,
+	 * so it is checked against the topology rather than against the gate table.
+	 */
+	it("leaves every transit mode at least one step-free gate", () => {
+		const modes = new Set(HOST_DISTRICTS.map((d) => d.transitMode));
+		expect(modes.size).toBeGreaterThan(0);
+
+		for (const mode of modes) {
+			const transit = TRANSIT_ZONE_FOR_MODE[mode];
+			const reachable = WALKWAYS.filter((w) => w.stepFree && (w.from === transit || w.to === transit))
+				.map((w) => (w.from === transit ? w.to : w.from))
+				.filter((id) => getZone(id)?.kind === "gate" && getZone(id)?.stepFree === true);
+
+			expect(reachable.length, `no step-free gate serves the ${mode} link`).toBeGreaterThan(0);
+		}
+	});
+
+	/**
+	 * The failure this prevents is a person stranded at a door they cannot open.
+	 * Both halves are asserted: the gate itself must be level, and the walkway
+	 * from their transit zone into it must be too — Gate C is level-adjacent to
+	 * nothing useful precisely because its walkway from the bus terminal has steps.
+	 */
+	it("sends every district to a gate that is level and reached by a step-free walkway", () => {
+		for (const district of HOST_DISTRICTS) {
+			const gate = arrivalGate(district, true);
+			const transit = TRANSIT_ZONE_FOR_MODE[district.transitMode];
+
+			expect(getZone(gate)?.stepFree, `${district.id} -> ${gate} is a stepped gate`).toBe(true);
+
+			const link = WALKWAYS.find(
+				(w) => (w.from === transit && w.to === gate) || (w.from === gate && w.to === transit),
+			);
+			expect(link?.stepFree, `${district.id} -> ${gate} is reached over steps from ${transit}`).toBe(true);
+		}
+	});
+
+	/** Bus fans have exactly one usable gate, so the flag must actually move them. */
+	it("diverts bus districts off the stepped Gate C approach", () => {
+		const bus = HOST_DISTRICTS.filter((d) => d.transitMode === "bus");
+		expect(bus.length).toBeGreaterThan(0);
+
+		for (const district of bus) {
+			expect(arrivalGate(district, false), district.id).toBe("gate-c");
+			expect(arrivalGate(district, true), district.id).toBe("gate-d");
+		}
+	});
+
+	it("is deterministic under the step-free flag", () => {
+		for (const district of HOST_DISTRICTS) {
+			expect(arrivalGate(district, true)).toBe(arrivalGate(district, true));
+		}
+	});
+
+	/** Every mode's step-free gates are a subset of that mode's gates, catalogue or not. */
+	it("never sends a step-free fan to the other mode's gate", () => {
+		for (const district of [...HOST_DISTRICTS, syntheticDistrict(20, "rail"), syntheticDistrict(20, "bus")]) {
+			const gate = arrivalGate(district, true);
+			const other = district.transitMode === "rail" ? "bus" : "rail";
+			expect(neighboursOf(gate), `${district.id} -> ${gate}`).not.toContain(other);
+			expect(ZONES.find((z) => z.id === gate)?.kind).toBe("gate");
+		}
+	});
 });
 
 describe("transitZone and approachZones", () => {
@@ -260,12 +349,47 @@ describe("transitZone and approachZones", () => {
 	 */
 	it("reports the district's transit zone and gate, both known and adjacent", () => {
 		for (const district of HOST_DISTRICTS) {
-			const zones = approachZones(district);
-			expect(zones).toEqual([transitZone(district.transitMode), arrivalGate(district)]);
-			for (const id of zones) {
-				expect(isKnownZone(id), `${district.id} approaches unknown zone ${id}`).toBe(true);
+			for (const stepFreeNeeded of [false, true]) {
+				const zones = approachZones(district, stepFreeNeeded);
+				expect(zones).toEqual([transitZone(district.transitMode), arrivalGate(district, stepFreeNeeded)]);
+				for (const id of zones) {
+					expect(isKnownZone(id), `${district.id} approaches unknown zone ${id}`).toBe(true);
+				}
+				expect(neighboursOf(zones[0] ?? "")).toContain(zones[1]);
 			}
-			expect(neighboursOf(zones[0] ?? "")).toContain(zones[1]);
+		}
+	});
+
+	/**
+	 * The zones select the crowding readings the prompt quotes, so the gate here
+	 * has to be the gate the plan reports. If this drifts from `arrivalGate`, the
+	 * model is told to cite the queue at one gate and handed another gate's.
+	 */
+	it("names the same gate arrivalGate does, for both access needs", () => {
+		for (const district of HOST_DISTRICTS) {
+			for (const stepFreeNeeded of [false, true]) {
+				expect(approachZones(district, stepFreeNeeded)[1], `${district.id} ${String(stepFreeNeeded)}`).toBe(
+					arrivalGate(district, stepFreeNeeded),
+				);
+			}
+		}
+	});
+
+	it("treats an omitted step-free flag as false", () => {
+		for (const district of HOST_DISTRICTS) {
+			expect(approachZones(district), district.id).toEqual(approachZones(district, false));
+		}
+	});
+
+	/**
+	 * `transitZone` is a mapping from a travel mode to a zone id, kept despite the
+	 * two vocabularies currently spelling the same. What makes it worth keeping is
+	 * that the id resolves in the topology — which is the half that would break if
+	 * a zone were renamed, and the half a plain string comparison would not catch.
+	 */
+	it("maps every mode to a transit zone that exists and is of transit kind", () => {
+		for (const mode of ["rail", "bus"] as const) {
+			expect(getZone(transitZone(mode))?.kind, mode).toBe("transit");
 		}
 	});
 });

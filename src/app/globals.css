@@ -240,6 +240,13 @@ ol {
 	flex-direction: column;
 }
 
+/* The outlook is a phrase, not a figure, and wraps rather than squeezing the
+   measured stats beside it off the row. */
+.clock__stat--wide {
+	flex-basis: 100%;
+	align-items: flex-end;
+}
+
 .clock__label {
 	color: var(--text-muted);
 	font-size: 0.7rem;
@@ -464,6 +471,52 @@ ol {
 	font-weight: 600;
 }
 
+/* A trend reads as a phrase, not a figure, so it drops the mono/large treatment
+   the measured stats use and sits across the full grid width. */
+.stat--wide {
+	grid-column: 1 / -1;
+}
+
+.stat__value--trend,
+.clock__value--trend {
+	font-family: var(--font-sans);
+	font-size: 0.9rem;
+}
+
+/* ---------------------------------------------------------------- trend --- */
+
+/*
+ * Direction of travel, carried by three channels at once: this colour, the arrow
+ * glyph, and the word in .trend__label. The colour is the least of the three and
+ * is never alone — see src/components/TrendIndicator.tsx. Hues are the existing
+ * alert-band tokens rather than new ones, so they inherit the contrast the
+ * design system already measures in both schemes instead of introducing a fourth
+ * palette to verify.
+ */
+.trend {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	font-weight: 600;
+}
+
+.trend__arrow {
+	font-size: 1.05rem;
+	line-height: 1;
+}
+
+.trend--rising {
+	color: var(--high);
+}
+
+.trend--falling {
+	color: var(--normal);
+}
+
+.trend--steady {
+	color: var(--text-muted);
+}
+
 .access {
 	padding: 0.6rem 0.75rem;
 	border-radius: var(--radius-sm);
@@ -634,7 +687,15 @@ ol {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.75rem 1rem;
-	align-items: center;
+	align-items: flex-end;
+}
+
+/* The audience picker sits on the control row beside the button rather than
+   stacking above it, so `.field`'s full-width default is scoped back here — the
+   same override `.form--inline` makes, for the same reason. */
+.advisor__controls .field {
+	width: auto;
+	min-width: 16rem;
 }
 
 .advisor__focus {

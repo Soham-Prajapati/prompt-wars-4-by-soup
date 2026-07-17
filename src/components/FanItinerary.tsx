@@ -3,7 +3,7 @@
 import { useId, useState, type ReactElement } from "react";
 
 import { useAsyncAction } from "@/hooks/use-async-action";
-import { fetchItinerary, type ApiError, type ItineraryResponse } from "@/lib/client";
+import { fetchItinerary, type ItineraryResponse } from "@/lib/client";
 import { HOST_DISTRICTS, INTERESTS } from "@/lib/itinerary";
 import { DEFAULT_LANGUAGE, LANGUAGES, tagFor } from "@/lib/languages";
 import { getZone } from "@/lib/venue";
@@ -14,14 +14,6 @@ const DEFAULT_DISTRICT = "manhattan-midtown";
 
 /** Most interests the API will accept, per `itineraryRequestSchema`. */
 const MAX_INTERESTS = 4;
-
-/** Message for a failed itinerary request; an absent model key is named as such. */
-function itineraryErrorMessage(error: ApiError): string {
-	if (error.code === "AI_UNAVAILABLE") {
-		return "Itinerary planner unavailable — GEMINI_API_KEY not configured on the server. Plans cannot be written until a model key is set.";
-	}
-	return error.message;
-}
 
 /** The computed in-bowl walk, rendered as the route it is. */
 function PlanRoute({ route }: { readonly route: Route }): ReactElement {
@@ -79,15 +71,7 @@ function PlanResult({ data }: { readonly data: ItineraryResponse }): ReactElemen
 				</div>
 			</dl>
 
-			{plan.route === null ? (
-				<p className="notice notice--warn">
-					No step-free walking path to the North Stand exists — the stand itself and both walkways into it have
-					steps. Your departure time and gate above are unaffected; ask staff at the gate for accessible-seating
-					assistance when you arrive.
-				</p>
-			) : (
-				<PlanRoute route={plan.route} />
-			)}
+			<PlanRoute route={plan.route} />
 
 			{itinerary === null ? (
 				<p className="notice notice--warn">
@@ -253,9 +237,16 @@ export function FanItinerary(): ReactElement {
 			<div className="result" aria-busy={busy} aria-live="polite">
 				{state.status === "loading" && <p className="result__pending">Building your matchday plan…</p>}
 
+				{/*
+				 * The server's own message is rendered verbatim, as in RoutePlanner.
+				 * This endpoint never fails for want of a model — it absorbs
+				 * generation errors and returns the computed plan with
+				 * `itinerary: null` — so an error here is validation, transport or a
+				 * genuine fault, and each already carries a message that says which.
+				 */}
 				{state.status === "error" && (
 					<p className="notice notice--error" role="alert">
-						{itineraryErrorMessage(state.error)}
+						{state.error.message}
 					</p>
 				)}
 

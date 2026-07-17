@@ -17,7 +17,8 @@
  */
 import { z } from "zod";
 
-import { type MatchPhase, type VenueSnapshot } from "@/lib/crowd-model";
+import { type Audience } from "@/lib/audience";
+import { type MatchPhase, type Trend, type VenueForecast, type VenueSnapshot } from "@/lib/crowd-model";
 import { type HostDistrict } from "@/lib/itinerary";
 import { type Route } from "@/lib/wayfinding";
 
@@ -34,14 +35,36 @@ export type ApiResult<T> =
 	| { readonly ok: true; readonly data: T }
 	| { readonly ok: false; readonly error: ApiError };
 
-/** Advisor payload: prioritised actions plus the state they were derived from. */
+/**
+ * `GET /api/snapshot` payload: the live snapshot with its projection attached.
+ *
+ * Extends the server's own `VenueSnapshot` rather than restating it, so a field
+ * added to the crowd model is a field this type gains — and a field the schema
+ * below must then account for.
+ */
+export interface SnapshotResponse extends VenueSnapshot {
+	/** Projection anchored to the same instant as the snapshot it rides on. */
+	readonly forecast: VenueForecast;
+}
+
+/** Advisor payload: the model's document plus the state it was derived from. */
 export interface AdvisorResponse {
-	/** Model-generated prioritised actions, as written by the model. */
+	/** Model-generated advice, as written by the model. */
 	readonly actions: string;
+	/** The audience `actions` was written for, echoed back by the server. */
+	readonly audience: Audience;
 	readonly snapshot: {
 		readonly phase: MatchPhase;
 		readonly frictionScore: number;
 		readonly criticalZones: readonly string[];
+	};
+	/** The projection the advice was asked to anticipate. */
+	readonly forecast: {
+		readonly horizonMinutes: number;
+		readonly projectedFrictionScore: number;
+		readonly frictionDelta: number;
+		readonly trend: Trend;
+		readonly risingZones: readonly string[];
 	};
 	/** The exact Gemini model that produced `actions`. */
 	readonly model: string;
@@ -70,8 +93,16 @@ export interface ItineraryPlan {
 	readonly departureMinutesBeforeKickoff: number;
 	/** Zone id of the gate the fan's transit mode lands at. */
 	readonly arrivalGate: string;
-	/** The walk from that gate to the seat, or `null` when no path satisfies the request. */
-	readonly route: Route | null;
+	/**
+	 * The walk from that gate to the seat.
+	 *
+	 * Non-nullable, and that is a claim the server keeps rather than a hope: it
+	 * only ever assigns a gate the fan can enter, and every such gate reaches the
+	 * matching seat over the concourse ring. A plan it could not route is a 500,
+	 * not a plan with a hole in it — so this component never has to render "no
+	 * route" copy for a case that cannot arise.
+	 */
+	readonly route: Route;
 }
 
 /** Matchday-itinerary payload: a computed plan, optionally narrated. */
@@ -88,6 +119,8 @@ export interface ItineraryResponse {
 const phaseSchema = z.enum(["pre-match", "first-half", "half-time", "second-half", "egress"]);
 const alertSchema = z.enum(["normal", "elevated", "high", "critical"]);
 const kindSchema = z.enum(["gate", "concourse", "stand", "concession", "transit", "medical"]);
+const trendSchema = z.enum(["rising", "falling", "steady"]);
+const audienceSchema = z.enum(["duty-manager", "steward"]);
 
 const zoneReadingSchema = z.object({
 	zoneId: z.string(),
@@ -101,20 +134,54 @@ const zoneReadingSchema = z.object({
 	alert: alertSchema,
 });
 
-const snapshotSchema: z.ZodType<VenueSnapshot> = z.object({
+const trendReadingSchema = z.object({
+	zoneId: z.string(),
+	name: z.string(),
+	kind: kindSchema,
+	density: z.number(),
+	projectedDensity: z.number(),
+	densityDelta: z.number(),
+	alert: alertSchema,
+	projectedAlert: alertSchema,
+	waitMinutes: z.number(),
+	projectedWaitMinutes: z.number(),
+	trend: trendSchema,
+});
+
+const forecastSchema: z.ZodType<VenueForecast> = z.object({
+	clockMinutes: z.number(),
+	horizonMinutes: z.number(),
+	horizonClockMinutes: z.number(),
+	horizonPhase: phaseSchema,
+	zones: z.array(trendReadingSchema),
+	projectedFrictionScore: z.number(),
+	frictionDelta: z.number(),
+	trend: trendSchema,
+});
+
+const snapshotResponseSchema: z.ZodType<SnapshotResponse> = z.object({
 	clockMinutes: z.number(),
 	phase: phaseSchema,
 	zones: z.array(zoneReadingSchema),
 	meanDensity: z.number(),
 	frictionScore: z.number(),
+	forecast: forecastSchema,
 });
 
 const advisorResponseSchema: z.ZodType<AdvisorResponse> = z.object({
 	actions: z.string(),
+	audience: audienceSchema,
 	snapshot: z.object({
 		phase: phaseSchema,
 		frictionScore: z.number(),
 		criticalZones: z.array(z.string()),
+	}),
+	forecast: z.object({
+		horizonMinutes: z.number(),
+		projectedFrictionScore: z.number(),
+		frictionDelta: z.number(),
+		trend: trendSchema,
+		risingZones: z.array(z.string()),
 	}),
 	model: z.string(),
 });
@@ -153,7 +220,7 @@ const itineraryPlanSchema: z.ZodType<ItineraryPlan> = z.object({
 	district: hostDistrictSchema,
 	departureMinutesBeforeKickoff: z.number(),
 	arrivalGate: z.string(),
-	route: routeSchema.nullable(),
+	route: routeSchema,
 });
 
 const itineraryResponseSchema: z.ZodType<ItineraryResponse> = z.object({
@@ -250,24 +317,32 @@ async function postJson<T>(
 }
 
 /**
- * Fetch the live venue snapshot.
+ * Fetch the live venue snapshot and its short-horizon forecast.
  *
  * @param signal Aborts the in-flight request, e.g. when the poller unmounts.
  */
-export async function fetchSnapshot(signal: AbortSignal): Promise<ApiResult<VenueSnapshot>> {
-	return request("/api/snapshot", { method: "GET", signal, cache: "no-store" }, snapshotSchema);
+export async function fetchSnapshot(signal: AbortSignal): Promise<ApiResult<SnapshotResponse>> {
+	return request("/api/snapshot", { method: "GET", signal, cache: "no-store" }, snapshotResponseSchema);
 }
 
 /**
- * Ask the AI advisor for prioritised operational actions.
+ * Ask the AI advisor for advice written for a particular audience.
  *
- * @param zoneId Zone to weight the advice towards, or `null` for the whole venue.
+ * @param zoneId Zone to weight the advice towards, or `null` for the whole
+ *   venue. Required when `audience` is `"steward"` — a briefing for a volunteer
+ *   is about the post they are standing at, and the server rejects one without.
+ * @param audience Who the advice is for: venue-wide actions for a duty manager,
+ *   or a plain-language post briefing for a steward.
  * @param signal Aborts the in-flight request.
  */
-export async function fetchAdvice(zoneId: string | null, signal: AbortSignal): Promise<ApiResult<AdvisorResponse>> {
+export async function fetchAdvice(
+	zoneId: string | null,
+	audience: Audience,
+	signal: AbortSignal,
+): Promise<ApiResult<AdvisorResponse>> {
 	// The schema treats `zoneId` as optional, so an unfocused request omits the
 	// key entirely rather than sending an explicit null it would reject.
-	const body = zoneId === null ? {} : { zoneId };
+	const body = zoneId === null ? { audience } : { zoneId, audience };
 	return postJson("/api/advisor", body, advisorResponseSchema, signal);
 }
 

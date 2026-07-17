@@ -15,16 +15,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { handle, jsonError, jsonOk, readJsonBody } from "@/lib/api";
-import { clockFromWallTime, snapshotAt, type VenueSnapshot, type ZoneReading } from "@/lib/crowd-model";
+import { currentSnapshot, type VenueSnapshot } from "@/lib/crowd-model";
 import { MODEL_NAME, generate } from "@/lib/gemini";
-import {
-	approachZones,
-	arrivalGate,
-	getDistrict,
-	recommendedDepartureMinutes,
-	transitZone,
-	type HostDistrict,
-} from "@/lib/itinerary";
+import { approachZones, arrivalGate, getDistrict, recommendedDepartureMinutes, type HostDistrict } from "@/lib/itinerary";
+import { describeZoneForFan } from "@/lib/prompt";
 import { itineraryRequestSchema } from "@/lib/validation";
 import { getZone } from "@/lib/venue";
 import { findRoute, type Route } from "@/lib/wayfinding";
@@ -46,51 +40,48 @@ function seatZoneFor(stepFreeNeeded: boolean): string {
 	return stepFreeNeeded ? "access-n" : "stand-n";
 }
 
-/** Render one zone reading as a fan-facing prompt line. */
-function describeZone(zone: ZoneReading): string {
-	const wait = zone.waitMinutes > 0 ? `, about ${String(zone.waitMinutes)} min queue` : "";
-	const access = getZone(zone.zoneId)?.stepFree === true ? "step-free access" : "steps on approach";
-	const pct = Math.round(zone.density * 100);
-	return `- ${zone.name} (${zone.kind}): ${String(pct)}% full, alert ${zone.alert}${wait}, ${access}`;
-}
-
-/** Describe the computed in-bowl walk, or state plainly that there is none. */
-function describeWalk(route: Route | null, stepFreeNeeded: boolean): readonly string[] {
-	if (route !== null) {
-		return [
-			`Walk inside the venue: ${route.names.join(" -> ")}`,
-			`That walk is ${String(route.metres)} m and about ${String(route.minutes)} min including congestion, and it is ${route.stepFree ? "step-free" : "not step-free (it includes steps)"}.`,
-		];
-	}
-
-	// A step-free request to a stepped seat has no graph solution, and the model
-	// must not paper over it by inventing a ramp. This is the honest branch: name
-	// the constraint and route the fan to a human.
-	if (stepFreeNeeded) {
-		return [
-			"There is NO step-free walking path from the gate to the North Stand: the stand itself and both walkways into it have steps.",
-			"Do not invent a step-free route to the seat. Tell the fan plainly that the final leg into the stand is not step-free, and that they must ask staff at the gate for accessible-seating assistance on arrival.",
-		];
-	}
-
+/**
+ * Describe the computed in-bowl walk to the model.
+ *
+ * @param route The walk from the arrival gate to the seat.
+ * @returns Prompt lines naming the stops, the distance, the time and the access.
+ */
+function describeWalk(route: Route): readonly string[] {
 	return [
-		"No walking path from the gate to the North Stand could be computed. Do not invent one; tell the fan to ask staff at the gate.",
+		`Walk inside the venue: ${route.names.join(" -> ")}`,
+		`That walk is ${String(route.metres)} m and about ${String(route.minutes)} min including congestion, and it is ${route.stepFree ? "step-free" : "not step-free (it includes steps)"}.`,
 	];
 }
 
-/** Compose the itinerary prompt from the computed plan and the live snapshot. */
+/**
+ * Compose the itinerary prompt from the computed plan and the live snapshot.
+ *
+ * @param district Where the fan is staying.
+ * @param departureMinutes Computed lead time before kick-off.
+ * @param gateId The gate the plan sends the fan to.
+ * @param route The computed walk from that gate to the seat.
+ * @param snapshot Live venue state the crowding lines are drawn from.
+ * @param interests Catalogue interest tags steering the one suggestion.
+ * @param stepFreeNeeded Whether the fan requires level access throughout.
+ * @param language Catalogue endonym the reply must be written in.
+ */
 function buildPrompt(
 	district: HostDistrict,
 	departureMinutes: number,
 	gateId: string,
-	route: Route | null,
+	route: Route,
 	snapshot: VenueSnapshot,
 	interests: readonly string[],
 	stepFreeNeeded: boolean,
 	language: string,
 ): string {
 	const gateName = getZone(gateId)?.name ?? gateId;
-	const relevant = new Set(approachZones(district));
+
+	// The flag has to be threaded through: the model is told below to cite the
+	// queue at the named gate, so the crowding lines must be for the gate the plan
+	// actually names. Reading the gate unflagged here would quote Gate C's queue
+	// under Gate D's name for a step-free bus arrival.
+	const relevant = new Set(approachZones(district, stepFreeNeeded));
 	const nearby = snapshot.zones.filter((z) => relevant.has(z.zoneId));
 
 	const leg =
@@ -103,16 +94,16 @@ function buildPrompt(
 		"",
 		`The fan is staying in: ${district.name}. ${district.description}`,
 		`Travel leg: ${leg}. Journey time about ${String(district.transitMinutes)} min.`,
-		`They arrive at: ${transitZone(district.transitMode) === "rail" ? "the Meadowlands rail platform" : "the bus terminal"}, and enter the venue at ${gateName}.`,
+		`They arrive at: ${district.transitMode === "rail" ? "the Meadowlands rail platform" : "the bus terminal"}, and enter the venue at ${gateName}.`,
 		`They must leave their accommodation ${String(departureMinutes)} minutes before kick-off (${String(district.transitMinutes)} min travel + entry buffer${stepFreeNeeded ? " + extra time because accessible entry lanes are fewer" : ""}).`,
 		`Step-free access needed: ${stepFreeNeeded ? "YES" : "no"}.`,
 		`Their interests: ${interests.join(", ")}.`,
 		"",
 		`Matchday phase right now: ${snapshot.phase} (clock ${String(snapshot.clockMinutes)} min since gates opened).`,
 		"Live crowding on their arrival zones:",
-		...nearby.map(describeZone),
+		...nearby.map(describeZoneForFan),
 		"",
-		...describeWalk(route, stepFreeNeeded),
+		...describeWalk(route),
 		"",
 		"Write a personalised matchday itinerary for this fan as a short timed plan, with one line per step, each starting with its time relative to kick-off (for example \"KO-95\"). Cover, in order:",
 		"1. Leaving the accommodation, at exactly the minutes-before-kick-off given above.",
@@ -148,15 +139,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 			await readJsonBody(request),
 		);
 
+		// `districtId` is refined against the catalogue by the schema above, so an
+		// unknown id is rejected as a 422 before reaching here. The lookup is
+		// still fallible in the type system; treat a miss as a validation failure
+		// rather than reaching for a non-null assertion.
 		const district = getDistrict(districtId);
 		if (district === undefined) {
 			return jsonError(422, "UNKNOWN_DISTRICT", "That district is not in the host-district catalogue.");
 		}
 
 		const departureMinutesBeforeKickoff = recommendedDepartureMinutes(district, stepFreeNeeded);
-		const gate = arrivalGate(district);
-		const snapshot = snapshotAt(clockFromWallTime(Date.now()));
+		const gate = arrivalGate(district, stepFreeNeeded);
+		const snapshot = currentSnapshot();
 		const route = findRoute(gate, seatZoneFor(stepFreeNeeded), snapshot, { stepFreeOnly: stepFreeNeeded });
+
+		// Every district-and-flag combination the catalogue permits has a walk from
+		// its arrival gate to its seat — `arrivalGate` only hands back gates a fan
+		// can enter, and the accessible platforms are lift-served from the
+		// concourse ring. So this is an invariant of the venue graph, asserted
+		// exhaustively in tests/itinerary.test.ts, and reaching it means the graph
+		// changed underneath the plan. The response type promises a route; the
+		// honest move is to fail rather than serve a plan that contradicts it.
+		if (route === null) {
+			return jsonError(
+				500,
+				"NO_ROUTE",
+				"A walking route from your gate to your seat could not be computed. Your departure time and gate are still correct — ask staff at the gate for directions.",
+			);
+		}
 
 		const itinerary = await compose(
 			buildPrompt(

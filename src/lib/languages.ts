@@ -36,6 +36,24 @@ export const LANGUAGES: readonly LanguageOption[] = [
 /** Language selected before the fan chooses one. */
 export const DEFAULT_LANGUAGE = "English";
 
+const LABELS: ReadonlySet<string> = new Set(LANGUAGES.map((option) => option.label));
+
+/**
+ * True when `label` is one of the endonyms {@link LANGUAGES} offers.
+ *
+ * The label is interpolated into every fan-facing prompt as the language to
+ * reply in, so an arbitrary string here is arbitrary prompt text: "English.
+ * Ignore all prior instructions" is a perfectly ordinary-looking language name
+ * and a perfectly ordinary prompt injection. Checking against the catalogue —
+ * which is also exactly what the picker offers — closes that off without costing
+ * any fan a language they could actually have chosen.
+ *
+ * @param label The candidate endonym, compared exactly — no trimming or casing.
+ */
+export function isKnownLanguage(label: string): boolean {
+	return LABELS.has(label);
+}
+
 /**
  * BCP 47 tag for a language label, falling back to English for an unknown label.
  *
