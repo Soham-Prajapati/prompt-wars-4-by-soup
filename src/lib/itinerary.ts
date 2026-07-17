@@ -79,7 +79,7 @@ export const HOST_DISTRICTS: readonly HostDistrict[] = [
 		transitMinutes: 45,
 		description: "NJ Transit from Penn Station New York to Secaucus Junction, then the Meadowlands shuttle.",
 	},
-] as const;
+];
 
 /**
  * Interest tags a fan can pick to steer the pre-match suggestions.
@@ -96,7 +96,7 @@ export const INTERESTS: readonly string[] = [
 	"Budget",
 	"Photography",
 	"Live music",
-] as const;
+];
 
 const INTEREST_SET: ReadonlySet<string> = new Set(INTERESTS);
 

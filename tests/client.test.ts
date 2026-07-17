@@ -24,6 +24,7 @@ import {
 } from "@/lib/client";
 import { FORECAST_HORIZON_MINUTES, clockFromWallTime, forecastAt, snapshotAt } from "@/lib/crowd-model";
 import { findRoute } from "@/lib/wayfinding";
+import { omit } from "./helpers";
 
 /** The instant every reference payload below is built at, so they agree. */
 const clock = clockFromWallTime(Date.now());
@@ -56,11 +57,6 @@ function stubFetch(impl: (input: string, init?: RequestInit) => Promise<Response
 /** A never-aborted signal, which every client function requires. */
 function signal(): AbortSignal {
 	return new AbortController().signal;
-}
-
-/** A copy of `value` with `key` removed, for building truncated payloads. */
-function omit(value: Record<string, unknown>, key: string): Record<string, unknown> {
-	return Object.fromEntries(Object.entries(value).filter(([name]) => name !== key));
 }
 
 /** Narrow a result to its success branch, failing the test when it is an error. */

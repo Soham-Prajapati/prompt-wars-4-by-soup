@@ -1,0 +1,44 @@
+name: CI
+
+# The repository defines quality gates — a type check, a lint pass with
+# --max-warnings 0, and a test suite with enforced coverage thresholds. This
+# workflow is what makes them gates rather than claims: every push and pull
+# request runs the same `npm run verify` a developer runs locally, so a
+# regression fails here rather than reaching main unnoticed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Type-check, lint, test, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` installs exactly the lockfile, so CI cannot pass on a
+      # dependency tree that a developer's machine happens to have.
+      - name: Install dependencies
+        run: npm ci
+
+      # Type check, lint (--max-warnings 0) and tests with coverage thresholds.
+      - name: Verify
+        run: npm run verify
+
+      # The production build is a separate gate: it exercises the App Router's
+      # route collection, which the unit tests do not.
+      - name: Build
+        run: npm run build
+
+      # Fails on any known vulnerability in the shipped dependency tree.
+      - name: Audit dependencies
+        run: npm audit --audit-level=low

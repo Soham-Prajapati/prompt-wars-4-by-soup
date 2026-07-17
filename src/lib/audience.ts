@@ -25,7 +25,7 @@
 export type Audience = "duty-manager" | "steward";
 
 /** Every audience the advisor supports, in the order the picker offers them. */
-export const AUDIENCES: readonly Audience[] = ["duty-manager", "steward"] as const;
+export const AUDIENCES: readonly Audience[] = ["duty-manager", "steward"];
 
 /**
  * Audience assumed when a request does not name one.

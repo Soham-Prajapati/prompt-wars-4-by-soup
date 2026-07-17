@@ -16,7 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { handle, jsonError, jsonOk, readJsonBody } from "@/lib/api";
 import { currentSnapshot, type VenueSnapshot } from "@/lib/crowd-model";
-import { MODEL_NAME, generate } from "@/lib/gemini";
+import { MODEL_NAME, generateOptional } from "@/lib/gemini";
 import { approachZones, arrivalGate, getDistrict, recommendedDepartureMinutes, type HostDistrict } from "@/lib/itinerary";
 import { describeZoneForFan } from "@/lib/prompt";
 import { itineraryRequestSchema } from "@/lib/validation";
@@ -118,20 +118,6 @@ function buildPrompt(
 	].join("\n");
 }
 
-/**
- * Compose the itinerary prose, or `null` when generation is unavailable.
- *
- * Any generation failure is absorbed here — an unreachable model must not cost
- * the fan the departure time and route that are already computed.
- */
-async function compose(prompt: string): Promise<string | null> {
-	try {
-		return await generate(prompt);
-	} catch {
-		return null;
-	}
-}
-
 /** Build a grounded matchday plan and have Gemini narrate it when possible. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
 	return handle(async () => {
@@ -168,7 +154,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 			);
 		}
 
-		const itinerary = await compose(
+		const itinerary = await generateOptional(
 			buildPrompt(
 				district,
 				departureMinutesBeforeKickoff,

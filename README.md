@@ -13,9 +13,9 @@ A World Cup matchday is a crowd-safety problem wearing a hospitality costume. Me
 
 PitchOps 26 puts the venue state, a fifteen-minute projection of it, and the model that reasons over both in the same place — for the duty manager deciding where to send staff, the volunteer steward on a post being asked questions, and the fan trying to get to their seat.
 
-### Coverage against the challenge — the four user types
+### The four user types in the brief
 
-The challenge names four audiences. Three are served; one is not, and is declared as not.
+The brief names four audiences. Three are served; one is not, and is declared as not.
 
 | User type | Served? | What they get | Implemented in |
 | --- | --- | --- | --- |
@@ -24,13 +24,13 @@ The challenge names four audiences. Three are served; one is not, and is declare
 | **Volunteers** | Yes — stewards only | A plain-language briefing for the single post they are stood at: what they will see, what to tell fans, and one observable trigger for escalating | `src/lib/audience.ts`, `src/app/api/advisor/route.ts:93` (`buildStewardPrompt`), `src/lib/prompt.ts:123` (`describeTrendForFan`) |
 | **Organizers** | **No** | — | Not addressed |
 
-**Organizers are not addressed.** The challenge lists them; this submission does not serve them. Everything here is scoped to a single venue on a single matchday — there is no tournament-level model in the code: no fixture list, no multi-venue view, no scheduling, accreditation, broadcast, ticketing-inventory or cross-city resourcing. An organizer's job begins where this console's data ends, and dressing the duty manager's view up as a tournament dashboard would be a claim the code cannot keep.
+**Organizers are not addressed.** The brief lists them; this project does not serve them. Everything here is scoped to a single venue on a single matchday — there is no tournament-level model in the code: no fixture list, no multi-venue view, no scheduling, accreditation, broadcast, ticketing-inventory or cross-city resourcing. An organizer's job begins where this console's data ends, and dressing the duty manager's view up as a tournament dashboard would be a claim the code cannot keep.
 
 The volunteer row is deliberately narrow, too. A steward on a post is one volunteer role among many a World Cup runs — transport marshals, accessibility hosts, media assistants, volunteer coordinators — and only the posted-steward case is built.
 
-### Coverage against the challenge — the eight capability keywords
+### The eight capability keywords in the brief
 
-| Feature | Challenge keyword | Implemented in |
+| Feature | Keyword | Implemented in |
 | --- | --- | --- |
 | Live congestion dashboard — per-zone density, occupancy, queue wait, alert band, and an aggregate Fan Friction Score | **Crowd management** | `src/lib/crowd-model.ts`, `src/app/api/snapshot/route.ts`, `src/components/VenueMap.tsx`, `src/components/LiveClock.tsx`, `src/components/ZonePanel.tsx` |
 | **15-minute venue forecast** — every zone projected forward, classified rising/falling/steady against a deadband, plus a venue-level friction delta; surfaced on the status strip and the zone panel, and fed into the advisor's prompt | **Operational intelligence** | `src/lib/crowd-model.ts:374` (`forecastAt`), `:467` (`currentReport`), `src/app/api/snapshot/route.ts`, `src/components/TrendIndicator.tsx`, `src/components/LiveClock.tsx`, `src/components/ZonePanel.tsx` |
@@ -42,7 +42,7 @@ The volunteer row is deliberately narrow, too. A steward on a post is one volunt
 | Egress transit surge, on the ops side — the rail link and bus terminal are zones like any other, so the forecast reports them loading in the quarter-hour *before* the final whistle, on the console and in the advisor's prompt | **Transportation**, **operational intelligence** | `src/lib/crowd-model.ts:374`, asserted at `tests/crowd-model.test.ts:642` ("sees transit loading up before egress begins") |
 | — | **Sustainability** | Not addressed |
 
-**Sustainability is not addressed.** The challenge lists it; this submission does not implement it. There is no waste, energy or emissions modelling anywhere in the code, and claiming otherwise would be the only dishonest row in the table.
+**Sustainability is not addressed.** The brief lists it; this project does not implement it. There is no waste, energy or emissions modelling anywhere in the code, and claiming otherwise would be the only dishonest row in the table.
 
 **Scope note on transportation.** The forecast gives the *venue* fifteen minutes of warning on the egress surge, which is what the duty manager can act on. It does not reach outside the fence: there is no train-timetable integration, no service-frequency model, and no departure-boards feed — and the fan-facing itinerary is computed from the district catalogue, not from the forecast.
 
@@ -80,9 +80,9 @@ Determinism was chosen deliberately, for two engineering reasons:
 **Degradation is graded, and the two halves differ.** With no `GEMINI_API_KEY` configured:
 
 - `POST /api/advisor` and `POST /api/assistant` return **`503 AI_UNAVAILABLE`**. Their entire answer *is* the generated text, so there is nothing to serve without it. Both panels name the missing key (`src/components/OpsAdvisor.tsx:19-21`).
-- `POST /api/wayfinding` and `POST /api/itinerary` return **`200`** with the computed route or plan and `directions: null` / `itinerary: null`. Generation failure is caught and absorbed (`src/app/api/wayfinding/route.ts:47-53`, `src/app/api/itinerary/route.ts:127-133`): losing the prose is degraded, losing the path is no answer. Both panels render the computed result and state that the narration is missing (`src/components/RoutePlanner.tsx:146-150`, `src/components/FanItinerary.tsx:76-80`).
+- `POST /api/wayfinding` and `POST /api/itinerary` return **`200`** with the computed route or plan and `directions: null` / `itinerary: null`. Generation failure is caught and absorbed by `generateOptional` (`src/lib/gemini.ts:95-101`), which both endpoints share (`src/app/api/wayfinding/route.ts:59`, `src/app/api/itinerary/route.ts:157`): losing the prose is degraded, losing the path is no answer. Both panels render the computed result and state that the narration is missing (`src/components/RoutePlanner.tsx:129-132`, `src/components/FanItinerary.tsx:55-58`).
 
-### ⚠️ The hosted demo has no API key attached — read this before judging the AI
+### The hosted demo runs without a Gemini key
 
 `GET /api/health` on the live URL reports `"aiConfigured": false`. The advisor and assistant panels say the key is missing; the route planner and itinerary panels still compute and render their answers, without the written prose. This is the degradation path working as designed, not a bug — but it does mean **the hosted URL cannot demonstrate the AI-generated text**.
 
@@ -139,7 +139,7 @@ ConsoleProvider                         GET  /api/snapshot   ─┐
 
 **Google Gemini API** (`gemini-2.0-flash`, `src/lib/gemini.ts:15`) via the official `@google/generative-ai` SDK. Flash is chosen for latency: an advisor a duty manager waits on is an advisor they stop opening. All four AI features call it — the ops advisor (which serves two audiences from two different prompts), the fan assistant, the route narrator and the itinerary planner. `GET /api/health` reports the exact model name and whether a key is configured, read from the same module the AI endpoints use, so the health response cannot drift from what the app really does.
 
-**That is the only Google service used, and the only one this README claims.** No Vertex AI, BigQuery, Pub/Sub, Cloud Run, Firebase, Maps or Secret Manager — **no GCP billing account was available for this build**, so the free-tier Gemini API is used directly and the app is deployed on Vercel. Naming GCP services this project does not call would be the cheapest possible way to lose the category.
+**That is the only Google service used, and the only one this README claims.** No Vertex AI, BigQuery, Pub/Sub, Cloud Run, Firebase, Maps or Secret Manager — **no GCP billing account was available for this build**, so the free-tier Gemini API is used directly and the app is deployed on Vercel. Naming GCP services this project does not call would put a claim in this README that the code cannot keep.
 
 ---
 
@@ -168,7 +168,7 @@ Without a key the app still runs: the map, the snapshot feed, the forecast, the 
 
 ## Quality gates
 
-All four gates were run against this commit. Real output:
+All five gates were run against this commit. Real output:
 
 | Gate | Command | Result |
 | --- | --- | --- |
@@ -178,27 +178,31 @@ All four gates were run against this commit. Real output:
 | Build | `npx next build` | **✓ Compiled successfully**, 8 routes |
 | Audit | `npm audit` | **found 0 vulnerabilities** |
 
+**All five run in CI.** `.github/workflows/ci.yml` runs `npm ci`, `npm run verify` (typecheck + lint + coverage-thresholded tests), `npm run build` and `npm audit --audit-level=low` on every push and pull request to `main` — one job, Node 22, `ubuntu-latest`. That is what makes these gates rather than claims: a regression fails there rather than reaching `main` unnoticed. There is no badge, no deploy pipeline and no matrix build.
+
 Coverage (`npx vitest run --coverage`, v8). Scope is `src/lib/**` and `src/app/api/**` — every line that runs on the server (`vitest.config.ts:19`). The React components are excluded because this suite does not render them; counting them would report a number no test earned.
 
 | | % Stmts | % Branch | % Funcs | % Lines |
 | --- | --- | --- | --- | --- |
-| **All files** | **97.34** | **90.95** | **100** | **98.32** |
+| **All files** | **97.33** | **90.95** | **100** | **98.31** |
 
 Twelve of the seventeen files in scope are at 100% on all four measures. The five that are not:
 
 | File | % Stmts | % Branch | % Funcs | % Lines |
 | --- | --- | --- | --- | --- |
-| `src/lib/gemini.ts` | 68.42 | 72.72 | 100 | 68.75 |
+| `src/lib/gemini.ts` | 72.72 | 72.72 | 100 | 73.68 |
 | `src/lib/wayfinding.ts` | 95.65 | 80.64 | 100 | 100 |
 | `src/lib/itinerary.ts` | 100 | 89.47 | 100 | 100 |
-| `src/app/api/itinerary/route.ts` | 96.15 | 88.88 | 100 | 96 |
+| `src/app/api/itinerary/route.ts` | 95.65 | 88.88 | 100 | 95.45 |
 | `src/app/api/wayfinding/route.ts` | 100 | 83.33 | 100 | 100 |
 
 `gemini.ts` is the floor, and deliberately: its uncovered lines are 38–48 and 69–70 — constructing the real SDK client and making the live `generateContent` network call. Covering them would mean asserting against a mock of Google's SDK, which tests the mock.
 
 **The thresholds are enforced, not decorative.** `vitest.config.ts:24-29` fails the run below 97 / 90 / 98 / 98 — set a hair under what the suite actually reaches, so the gate bites on a real regression rather than sitting above the true figure. `npm run test:coverage` is part of `npm run verify` (`package.json:15`).
 
-Size: 42 TypeScript files — 4,024 lines in `src/`, 4,595 lines in `tests/`.
+Size: 44 TypeScript files — 4,056 lines in `src/`, 4,654 lines in `tests/`.
+
+Deeper engineering notes — the design decisions, the honest scope limits, and the evidence behind every number above — are in [`docs/ENGINEERING.md`](docs/ENGINEERING.md).
 
 ---
 

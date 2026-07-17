@@ -2,40 +2,18 @@
 
 import { useId, useState, type ReactElement } from "react";
 
+import { RouteSummary } from "@/components/RouteSummary";
 import { useAsyncAction } from "@/hooks/use-async-action";
 import { fetchItinerary, type ItineraryResponse } from "@/lib/client";
 import { HOST_DISTRICTS, INTERESTS } from "@/lib/itinerary";
 import { DEFAULT_LANGUAGE, LANGUAGES, tagFor } from "@/lib/languages";
 import { getZone } from "@/lib/venue";
-import { type Route } from "@/lib/wayfinding";
 
 /** District selected before the fan picks one. */
 const DEFAULT_DISTRICT = "manhattan-midtown";
 
 /** Most interests the API will accept, per `itineraryRequestSchema`. */
 const MAX_INTERESTS = 4;
-
-/** The computed in-bowl walk, rendered as the route it is. */
-function PlanRoute({ route }: { readonly route: Route }): ReactElement {
-	return (
-		<div className="route">
-			<div className="route__head">
-				<span className={route.stepFree ? "badge badge--normal" : "badge badge--high"}>
-					{route.stepFree ? "Step-free" : "Includes steps"}
-				</span>
-				<span className="route__metric">{route.metres} m</span>
-				<span className="route__metric">{route.minutes} min walk</span>
-			</div>
-			<ol className="route__path">
-				{route.names.map((name, index) => (
-					<li key={route.path[index] ?? name} className="route__stop">
-						{name}
-					</li>
-				))}
-			</ol>
-		</div>
-	);
-}
 
 /**
  * A settled itinerary: the computed plan first, then the written version.
@@ -71,7 +49,7 @@ function PlanResult({ data }: { readonly data: ItineraryResponse }): ReactElemen
 				</div>
 			</dl>
 
-			<PlanRoute route={plan.route} />
+			<RouteSummary route={plan.route} />
 
 			{itinerary === null ? (
 				<p className="notice notice--warn">

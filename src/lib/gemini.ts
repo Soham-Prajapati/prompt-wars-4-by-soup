@@ -70,6 +70,36 @@ export async function generate(prompt: string): Promise<string> {
 	return result.response.text().trim();
 }
 
+/**
+ * Generate text from a prompt, or `null` when generation fails.
+ *
+ * The degradation contract, in one place. Two endpoints compute an answer the
+ * fan can act on — a departure time, a gate, a walking route — and then ask the
+ * model to narrate it. For those, a model outage must cost the prose and nothing
+ * else: returning a 503 would throw away a correct computed answer because an
+ * optional embellishment was unavailable.
+ *
+ * Every failure is absorbed, not just an absent key: a timeout, a safety block
+ * and a quota rejection are all the same event to a caller that only wanted
+ * prose, and enumerating them here would mean a new upstream error class turning
+ * into a 500 on the day it first appears.
+ *
+ * This is the exception, not the rule. {@link generate} throws, and callers whose
+ * answer *is* the generated text — the advisor, the assistant — must let it, so
+ * that an outage surfaces as a 503 the client can retry rather than an empty
+ * reply that reads like the model had nothing to say.
+ *
+ * @param prompt The fully-composed user prompt.
+ * @returns The generated text, or `null` when generation was not possible.
+ */
+export async function generateOptional(prompt: string): Promise<string | null> {
+	try {
+		return await generate(prompt);
+	} catch {
+		return null;
+	}
+}
+
 /** Reset the cached client. Exposed for tests; not used in application code. */
 export function resetModelCache(): void {
 	cachedModel = null;

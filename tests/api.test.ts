@@ -14,11 +14,7 @@ import { ZodError, z } from "zod";
 
 import { MalformedBodyError, SECURITY_HEADERS, handle, jsonError, jsonOk, readJsonBody } from "@/lib/api";
 import { GeminiUnavailableError } from "@/lib/gemini";
-
-/** Read a response body as an unknown value for schema-free inspection. */
-async function bodyOf(response: Response): Promise<unknown> {
-	return (await response.json()) as unknown;
-}
+import { bodyOf, expectSecurityHeaders } from "./helpers";
 
 /** The envelope every failing route emits. */
 const envelope = z.object({
@@ -34,13 +30,6 @@ const envelope = z.object({
 /** Parse a response as the error envelope, failing the test if it is not one. */
 async function errorBody(response: Response): Promise<z.infer<typeof envelope>> {
 	return envelope.parse(await bodyOf(response));
-}
-
-/** Assert the full security header set is present with its documented values. */
-function expectSecurityHeaders(response: Response): void {
-	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
-		expect(response.headers.get(name), name).toBe(value);
-	}
 }
 
 /** Build a POST request carrying a raw, possibly invalid, body string. */

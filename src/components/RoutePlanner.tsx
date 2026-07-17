@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactElement } from "react";
 
+import { RouteSummary } from "@/components/RouteSummary";
 import { useAsyncAction } from "@/hooks/use-async-action";
 import { fetchRoute, type WayfindingResponse } from "@/lib/client";
 import { ZONES } from "@/lib/venue";
@@ -123,26 +124,7 @@ export function RoutePlanner(): ReactElement {
 				)}
 
 				{state.status === "ok" && (
-					<div className="route">
-						<div className="route__head">
-							<span className={state.data.route.stepFree ? "badge badge--normal" : "badge badge--high"}>
-								{state.data.route.stepFree ? "Step-free" : "Includes steps"}
-							</span>
-							<span className="route__metric">{state.data.route.metres} m</span>
-							<span className="route__metric">{state.data.route.minutes} min walk</span>
-							<span className="route__metric">
-								{Math.round(state.data.route.meanDensity * 100)}% mean density
-							</span>
-						</div>
-
-						<ol className="route__path">
-							{state.data.route.names.map((name, index) => (
-								<li key={state.data.route.path[index] ?? name} className="route__stop">
-									{name}
-								</li>
-							))}
-						</ol>
-
+					<RouteSummary route={state.data.route} showDensity>
 						{state.data.directions === null ? (
 							<p className="notice notice--warn">
 								Turn-by-turn directions unavailable — the AI narration could not be generated. The route
@@ -157,7 +139,7 @@ export function RoutePlanner(): ReactElement {
 								</p>
 							</>
 						)}
-					</div>
+					</RouteSummary>
 				)}
 			</div>
 		</div>

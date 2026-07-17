@@ -26,6 +26,7 @@ import {
 	wayfindingRequestSchema,
 } from "@/lib/validation";
 import { ZONES } from "@/lib/venue";
+import { omit } from "./helpers";
 
 /** Parse and assert failure, returning the error so its issues can be read. */
 function expectReject(schema: ZodTypeAny, value: unknown): ZodError {
@@ -43,11 +44,6 @@ function paths(error: ZodError): readonly string[] {
 /** A string of exactly `length` characters. */
 function chars(length: number): string {
 	return "a".repeat(length);
-}
-
-/** A copy of `value` with `key` removed, for building "missing field" bodies. */
-function omit(value: Record<string, unknown>, key: string): Record<string, unknown> {
-	return Object.fromEntries(Object.entries(value).filter(([name]) => name !== key));
 }
 
 const KNOWN_ZONE = "gate-a";

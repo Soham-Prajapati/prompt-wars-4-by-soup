@@ -69,7 +69,7 @@ export const ZONES: readonly Zone[] = [
 	{ id: "medical-w", name: "Medical Post West", kind: "medical", x: 16, y: 34, capacity: 120, stepFree: true },
 	{ id: "rail", name: "Rail Link — Meadowlands", kind: "transit", x: 92, y: 14, capacity: 3600, stepFree: true },
 	{ id: "bus", name: "Bus Terminal", kind: "transit", x: 8, y: 86, capacity: 2200, stepFree: true },
-] as const;
+];
 
 /**
  * Every walkway joining two zones.
@@ -101,7 +101,7 @@ export const WALKWAYS: readonly Walkway[] = [
 	// Lift-served level access to the accessible platforms.
 	{ from: "conc-n", to: "access-n", metres: 85, stepFree: true },
 	{ from: "conc-s", to: "access-s", metres: 85, stepFree: true },
-] as const;
+];
 
 const ZONES_BY_ID: ReadonlyMap<string, Zone> = new Map(ZONES.map((z) => [z.id, z]));
 

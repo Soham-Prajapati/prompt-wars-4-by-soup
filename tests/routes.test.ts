@@ -5,7 +5,9 @@
  * so a server would add a socket and nothing else. Gemini is the only thing
  * mocked, and it is mocked by delegation: unless a test says otherwise the real
  * client runs and fails exactly as it would with no key, which is what makes the
- * degradation tests below mean something.
+ * degradation tests below mean something. Both of its entry points are stubbed
+ * that way — `generate`, whose failure is a 503, and `generateOptional`, whose
+ * failure is the missing prose the degradation tests are about.
  *
  * The properties under test are the ones a hand-written route can silently get
  * wrong: that validation actually runs before the model is called, that a model
@@ -16,7 +18,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SECURITY_HEADERS } from "@/lib/api";
 import { POST as advisorPOST } from "@/app/api/advisor/route";
 import { POST as assistantPOST } from "@/app/api/assistant/route";
 import { GET as healthGET } from "@/app/api/health/route";
@@ -24,11 +25,12 @@ import { POST as itineraryPOST } from "@/app/api/itinerary/route";
 import { GET as snapshotGET } from "@/app/api/snapshot/route";
 import { POST as wayfindingPOST } from "@/app/api/wayfinding/route";
 import { FORECAST_HORIZON_MINUTES, currentReport, forecastAt, snapshotAt } from "@/lib/crowd-model";
-import { MODEL_NAME, generate, isConfigured, resetModelCache } from "@/lib/gemini";
+import { MODEL_NAME, generate, generateOptional, isConfigured, resetModelCache } from "@/lib/gemini";
 import { HOST_DISTRICTS } from "@/lib/itinerary";
 import { describeTrendForFan, describeZoneForFan } from "@/lib/prompt";
 import { ZONES, getZone } from "@/lib/venue";
 import { findRoute } from "@/lib/wayfinding";
+import { bodyOf, expectSecurityHeaders } from "./helpers";
 
 const realGemini = await vi.importActual<typeof import("@/lib/gemini")>("@/lib/gemini");
 const realWayfinding = await vi.importActual<typeof import("@/lib/wayfinding")>("@/lib/wayfinding");
@@ -36,9 +38,17 @@ const realCrowdModel = await vi.importActual<typeof import("@/lib/crowd-model")>
 
 vi.mock("@/lib/gemini", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@/lib/gemini")>();
-	// Delegating by default keeps `generate` honest: with no key configured the
-	// real gate throws, so the graceful-degradation tests exercise the real path.
-	return { ...actual, generate: vi.fn(actual.generate) };
+	// Delegating by default keeps both entry points honest: with no key configured
+	// the real gate throws, so the graceful-degradation tests exercise the real
+	// path — the real `generateOptional`, absorbing a real `generate` failure.
+	//
+	// Both are stubbed, because they are separate seams. `generateOptional` calls
+	// `generate` inside the module, where a mock cannot reach: replacing the
+	// exported `generate` does not change whom `generateOptional` calls. So a
+	// route that narrates optionally is controlled by stubbing `generateOptional`,
+	// and one that needs a 503 by stubbing `generate`. `withHealthyModel` stubs
+	// both, which is also what stops a stubbed key from reaching the network.
+	return { ...actual, generate: vi.fn(actual.generate), generateOptional: vi.fn(actual.generateOptional) };
 });
 
 vi.mock("@/lib/wayfinding", async (importOriginal) => {
@@ -57,6 +67,7 @@ vi.mock("@/lib/crowd-model", async (importOriginal) => {
 });
 
 const generateMock = vi.mocked(generate);
+const generateOptionalMock = vi.mocked(generateOptional);
 const findRouteMock = vi.mocked(findRoute);
 const currentReportMock = vi.mocked(currentReport);
 
@@ -83,6 +94,7 @@ beforeEach(() => {
 	vi.setSystemTime(FROZEN_NOW);
 	resetModelCache();
 	generateMock.mockImplementation(realGemini.generate);
+	generateOptionalMock.mockImplementation(realGemini.generateOptional);
 	findRouteMock.mockImplementation(realWayfinding.findRoute);
 	currentReportMock.mockImplementation(realCrowdModel.currentReport);
 	// Absent unless a test opts in, so "AI unavailable" is the default world and
@@ -95,6 +107,7 @@ afterEach(() => {
 	vi.unstubAllEnvs();
 	resetModelCache();
 	generateMock.mockReset();
+	generateOptionalMock.mockReset();
 	findRouteMock.mockReset();
 	currentReportMock.mockReset();
 });
@@ -117,11 +130,6 @@ function postRaw(path: string, raw: string): NextRequest {
 	});
 }
 
-/** Read a response body as `unknown`, for shape assertions without casts. */
-async function bodyOf(response: Response): Promise<unknown> {
-	return (await response.json()) as unknown;
-}
-
 /** Narrow an unknown body to a record so its fields can be read. */
 function asRecord(value: unknown): Record<string, unknown> {
 	expect(typeof value).toBe("object");
@@ -130,25 +138,45 @@ function asRecord(value: unknown): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
-/** Assert the documented header set survived onto this response. */
-function expectSecurityHeaders(response: Response): void {
-	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
-		expect(response.headers.get(name), name).toBe(value);
-	}
-}
-
-/** Configure a key and a canned reply, standing in for a healthy Gemini. */
+/**
+ * Configure a key and a canned reply, standing in for a healthy Gemini.
+ *
+ * Both seams are stubbed. A route reaches the model through exactly one of them,
+ * and stubbing only the one under test would leave the other delegating to the
+ * real client — which, with the key this stubs, would try the network.
+ */
 function withHealthyModel(reply = CANNED): void {
 	vi.stubEnv("GEMINI_API_KEY", "test-key-value");
 	generateMock.mockResolvedValue(reply);
+	generateOptionalMock.mockResolvedValue(reply);
 }
 
-/** The single prompt string `generate` was called with. */
+/**
+ * The single prompt string the route sent, by whichever seam it uses.
+ *
+ * Pooled rather than asking the caller which entry point its route happens to
+ * call: what every one of these tests is really asserting is that the model was
+ * asked exactly once, and what it was told. Pooling also keeps the count honest
+ * — a route that somehow asked twice, by either seam, fails here.
+ */
 function promptSent(): string {
-	expect(generateMock).toHaveBeenCalledTimes(1);
-	const prompt = generateMock.mock.calls[0]?.[0];
+	const calls = [...generateMock.mock.calls, ...generateOptionalMock.mock.calls];
+	expect(calls).toHaveLength(1);
+	const prompt = calls[0]?.[0];
 	expect(typeof prompt).toBe("string");
 	return prompt ?? "";
+}
+
+/** Assert the route never reached the model, by either seam. */
+function expectNoModelCall(): void {
+	expect(generateMock).not.toHaveBeenCalled();
+	expect(generateOptionalMock).not.toHaveBeenCalled();
+}
+
+/** Forget prior calls on both seams, so the next `promptSent` reads this one. */
+function clearModelCalls(): void {
+	generateMock.mockClear();
+	generateOptionalMock.mockClear();
 }
 
 const GOOD_ADVISOR = { zoneId: "gate-a" };
@@ -299,7 +327,7 @@ describe("GET /api/snapshot", () => {
 		const response = await snapshotGET();
 		expect(response.status).toBe(200);
 		expect(asRecord(asRecord(await bodyOf(response))["forecast"])["trend"]).toBeDefined();
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 	});
 
 	it("carries the security headers", async () => {
@@ -331,7 +359,7 @@ describe("request validation across the POST routes", () => {
 		it(`does not call the model for an invalid body on ${label}`, async () => {
 			withHealthyModel();
 			await handler(post(path, badBody));
-			expect(generateMock).not.toHaveBeenCalled();
+			expectNoModelCall();
 		});
 
 		it(`rejects malformed JSON on ${label} with 400 MALFORMED_BODY`, async () => {
@@ -380,7 +408,7 @@ describe("POST /api/advisor", () => {
 			"duty-manager",
 		);
 
-		generateMock.mockClear();
+		clearModelCalls();
 		const steward = await advisorPOST(post("/api/advisor", { zoneId: "gate-a", audience: "steward" }));
 		expect(asRecord(await bodyOf(steward))["audience"]).toBe("steward");
 	});
@@ -447,7 +475,7 @@ describe("POST /api/advisor", () => {
 		await advisorPOST(post("/api/advisor", { zoneId: "medical-w" }));
 		expect(promptSent()).toContain("focused on Medical Post West");
 
-		generateMock.mockClear();
+		clearModelCalls();
 		await advisorPOST(post("/api/advisor", {}));
 		expect(promptSent()).toContain("No specific zone is in focus");
 	});
@@ -614,7 +642,7 @@ describe("POST /api/advisor — steward audience", () => {
 
 		const error = asRecord(asRecord(await bodyOf(response))["error"]);
 		expect(error["code"]).toBe("VALIDATION_ERROR");
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 		expectSecurityHeaders(response);
 	});
 
@@ -624,7 +652,7 @@ describe("POST /api/advisor — steward audience", () => {
 		const response = await advisorPOST(post("/api/advisor", { zoneId: "gate-a", audience: "mascot" }));
 		expect(response.status).toBe(422);
 		expect(asRecord(asRecord(await bodyOf(response))["error"])["code"]).toBe("VALIDATION_ERROR");
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 	});
 
 	/**
@@ -651,13 +679,13 @@ describe("POST /api/advisor — steward audience", () => {
 		expect(error["code"]).toBe("INTERNAL_ERROR");
 		expectSecurityHeaders(response);
 		// The prompt is abandoned before the model is asked to narrate a hole in it.
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 	});
 
 	/** Both audiences must answer, at every post on the map. */
 	it("briefs a steward at every zone in the topology", async () => {
 		for (const zone of ZONES) {
-			generateMock.mockClear();
+			clearModelCalls();
 			withHealthyModel();
 
 			const response = await advisorPOST(post("/api/advisor", { zoneId: zone.id, audience: "steward" }));
@@ -775,7 +803,7 @@ describe("POST /api/wayfinding", () => {
 	it("does not call the model when no route exists", async () => {
 		withHealthyModel();
 		await wayfindingPOST(post("/api/wayfinding", { origin: "gate-a", destination: "stand-n", stepFreeOnly: true }));
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 	});
 });
 
@@ -914,7 +942,7 @@ describe("POST /api/itinerary", () => {
 	it("quotes live crowding for exactly the gate the plan reports, for every district and both access needs", async () => {
 		for (const district of HOST_DISTRICTS) {
 			for (const stepFreeNeeded of [false, true]) {
-				generateMock.mockClear();
+				clearModelCalls();
 				withHealthyModel();
 
 				const response = await itineraryPOST(
@@ -992,6 +1020,6 @@ describe("POST /api/itinerary", () => {
 		expect(error["code"]).toBe("NO_ROUTE");
 		expectSecurityHeaders(response);
 		// The plan is abandoned before the model is asked to narrate a hole in it.
-		expect(generateMock).not.toHaveBeenCalled();
+		expectNoModelCall();
 	});
 });

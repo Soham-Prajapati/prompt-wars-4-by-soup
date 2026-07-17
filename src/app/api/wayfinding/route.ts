@@ -12,7 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { handle, jsonError, jsonOk, readJsonBody } from "@/lib/api";
 import { currentSnapshot } from "@/lib/crowd-model";
-import { MODEL_NAME, generate } from "@/lib/gemini";
+import { MODEL_NAME, generateOptional } from "@/lib/gemini";
 import { wayfindingRequestSchema } from "@/lib/validation";
 import { findRoute, type Route } from "@/lib/wayfinding";
 
@@ -38,20 +38,6 @@ function buildPrompt(route: Route, stepFreeOnly: boolean): string {
 	].join("\n");
 }
 
-/**
- * Narrate a route, or `null` when generation is unavailable.
- *
- * Any generation failure is absorbed here — an unreachable model must not cost
- * the caller the route it already has.
- */
-async function narrate(route: Route, stepFreeOnly: boolean): Promise<string | null> {
-	try {
-		return await generate(buildPrompt(route, stepFreeOnly));
-	} catch {
-		return null;
-	}
-}
-
 /** Compute a congestion-aware route and narrate it when possible. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
 	return handle(async () => {
@@ -70,7 +56,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 			);
 		}
 
-		const directions = await narrate(route, stepFreeOnly);
+		const directions = await generateOptional(buildPrompt(route, stepFreeOnly));
 
 		return jsonOk({
 			route,
